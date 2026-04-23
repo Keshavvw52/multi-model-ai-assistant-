@@ -1,4 +1,4 @@
-import initSqlJs from 'sql.js';
+import Database from 'better-sqlite3';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { config } from '../config.js';
 

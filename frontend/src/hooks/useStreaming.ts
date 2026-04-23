@@ -24,6 +24,7 @@ export function useStreaming(
   onChunk?: (text: string) => void,
   onDone?: (conversationId: string, messageId: string) => void
 ): UseStreamingReturn {
+
   const [state, setState] = useState<StreamingState>({
     isStreaming: false,
     text: '',
@@ -31,85 +32,110 @@ export function useStreaming(
     conversationId: null,
   });
 
+  // ✅ ALL hooks must be inside the function
   const esRef = useRef<EventSource | null>(null);
   const fullTextRef = useRef('');
+  const resolveRef = useRef<(value: string | null) => void>();
+  const rejectRef = useRef<(reason?: any) => void>();
 
   const cancel = useCallback(() => {
-    esRef.current?.close();
-    esRef.current = null;
-    setState(prev => ({ ...prev, isStreaming: false }));
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+
+    // reject pending promise (important)
+    rejectRef.current?.(new Error('Stream cancelled by user'));
+
+    setState((prev) => ({
+      ...prev,
+      isStreaming: false,
+    }));
   }, []);
 
   const reset = useCallback(() => {
     cancel();
     fullTextRef.current = '';
-    setState({ isStreaming: false, text: '', error: null, conversationId: null });
+    setState({
+      isStreaming: false,
+      text: '',
+      error: null,
+      conversationId: null,
+    });
   }, [cancel]);
 
-  const startStream = useCallback(async (
-    message: string,
-    conversationId?: string,
-    mediaIds?: string[]
-  ): Promise<string | null> => {
-    // Cancel any existing stream
-    cancel();
-    fullTextRef.current = '';
-    setState({ isStreaming: true, text: '', error: null, conversationId: conversationId || null });
+  const startStream = useCallback(
+    (message: string, conversationId?: string, mediaIds?: string[]) => {
+      return new Promise<string | null>((resolve, reject) => {
+        resolveRef.current = resolve;
+        rejectRef.current = reject;
 
-    return new Promise((resolve) => {
-      const url = buildStreamUrl(message, conversationId, mediaIds);
-      const es = new EventSource(url);
-      esRef.current = es;
+        const url = buildStreamUrl(message, conversationId, mediaIds);
 
-      es.addEventListener('start', (e) => {
-        try {
+        fullTextRef.current = '';
+        setState({
+          isStreaming: true,
+          text: '',
+          error: null,
+          conversationId: null,
+        });
+
+        const es = new EventSource(url);
+        esRef.current = es;
+
+        es.addEventListener('start', (e: MessageEvent) => {
           const data = JSON.parse(e.data);
-          setState(prev => ({ ...prev, conversationId: data.conversationId }));
-        } catch {}
-      });
+          setState((prev) => ({
+            ...prev,
+            conversationId: data.conversationId,
+          }));
+        });
 
-      es.addEventListener('chunk', (e) => {
-        try {
+        es.addEventListener('chunk', (e: MessageEvent) => {
           const data = JSON.parse(e.data);
+
           fullTextRef.current += data.text;
-          setState(prev => ({ ...prev, text: fullTextRef.current }));
-          onChunk?.(fullTextRef.current);
-        } catch {}
-      });
 
-      es.addEventListener('done', (e) => {
-        try {
+          setState((prev) => ({
+            ...prev,
+            text: fullTextRef.current,
+          }));
+
+          onChunk?.(data.text);
+        });
+
+        es.addEventListener('done', (e: MessageEvent) => {
           const data = JSON.parse(e.data);
+
+          resolve(fullTextRef.current);
+
+          onDone?.(data.conversationId, data.messageId);
+
           es.close();
           esRef.current = null;
-          setState(prev => ({ ...prev, isStreaming: false }));
-          onDone?.(data.conversationId, data.messageId);
-          resolve(fullTextRef.current);
-        } catch {
-          resolve(fullTextRef.current);
-        }
-      });
 
-      es.addEventListener('error', (e) => {
-        try {
-          const data = JSON.parse((e as MessageEvent).data);
-          setState(prev => ({ ...prev, isStreaming: false, error: data.error }));
-        } catch {
-          setState(prev => ({ ...prev, isStreaming: false, error: 'Streaming error occurred' }));
-        }
-        es.close();
-        esRef.current = null;
-        resolve(null);
-      });
+          setState((prev) => ({
+            ...prev,
+            isStreaming: false,
+          }));
+        });
 
-      es.onerror = () => {
-        if (es.readyState === EventSource.CLOSED) {
-          setState(prev => ({ ...prev, isStreaming: false }));
-          resolve(fullTextRef.current || null);
-        }
-      };
-    });
-  }, [cancel, onChunk, onDone]);
+        es.addEventListener('error', (err) => {
+          reject(err);
+
+          es.close();
+          esRef.current = null;
+
+          setState((prev) => ({
+            ...prev,
+            isStreaming: false,
+            error: 'Streaming failed',
+          }));
+        });
+      });
+    },
+    [onChunk, onDone]
+  );
 
   return { ...state, startStream, cancel, reset };
 }

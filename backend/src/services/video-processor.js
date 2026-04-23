@@ -3,6 +3,21 @@ import { join, basename } from 'path';
 import { mkdirSync, existsSync, readdirSync } from 'fs';
 import { config } from '../config.js';
 
+// Safe FPS parser (replace eval)
+function parseFps(rate) {
+  if (!rate) return 0;
+
+  const parts = rate.split('/');
+  if (parts.length !== 2) return 0;
+
+  const num = parseFloat(parts[0]);
+  const den = parseFloat(parts[1]);
+
+  if (!den) return 0;
+
+  return num / den;
+}
+
 /**
  * Get video metadata (duration, resolution, fps, codec, etc.)
  */
@@ -21,7 +36,7 @@ export function getVideoMetadata(videoPath) {
         bitrate: parseInt(format.bit_rate) || 0,
         width: videoStream?.width || 0,
         height: videoStream?.height || 0,
-        fps: eval(videoStream?.r_frame_rate || '0/1') || 0, // e.g., "30000/1001"
+        fps: parseFps(videoStream?.r_frame_rate), // e.g., "30000/1001"
         videoCodec: videoStream?.codec_name || 'unknown',
         audioCodec: audioStream?.codec_name || null,
         hasAudio: !!audioStream,

@@ -2,6 +2,17 @@ import { chatCompletion, streamChatCompletion } from './groq.js';
 import { getImageMetadata, resizeForAnalysis } from './image-processor.js';
 import { readFileSync, existsSync } from 'fs';
 import { basename } from 'path';
+import pdfParse from 'pdf-parse';
+
+async function extractPdfText(filePath) {
+  try {
+    const buffer = readFileSync(filePath);
+    const data = await pdfParse(buffer);
+    return data.text || '';
+  } catch (err) {
+    return '[Failed to extract PDF text]';
+  }
+}
 
 /**
  * Build a descriptive prompt for an image to simulate vision input.
@@ -9,14 +20,27 @@ import { basename } from 'path';
  */
 async function buildImageContext(mediaFile) {
   const meta = await getImageMetadata(mediaFile.path);
-  return {
-    description: `[IMAGE: ${mediaFile.original_name}]
-- File: ${mediaFile.original_name}
-- Format: ${meta.format?.toUpperCase() || mediaFile.mime_type}
-- Dimensions: ${meta.width}x${meta.height} pixels
-- Size: ${(mediaFile.size / 1024).toFixed(1)}KB`,
-    metadata: meta,
-  };
+
+  return `
+[Image Attached: ${mediaFile.original_name}]
+
+Available Information:
+- Dimensions: ${meta.width} x ${meta.height}
+- File Size: ${meta.size} bytes
+- Format: ${meta.format || 'unknown'}
+
+IMPORTANT:
+- The system does NOT have access to actual image pixels.
+- It cannot visually inspect or recognize objects in the image.
+- It should NOT hallucinate or assume visual content.
+
+You can:
+- Answer questions about metadata
+- Suggest what might be done to analyze the image
+- Ask user for clarification if needed
+
+User Query:
+`;
 }
 
 /**
@@ -106,66 +130,31 @@ Analyze the provided files and give a comprehensive comparison based on their me
  * @returns {Object} - { summary, scenes, keyMoments, frameDescriptions }
  */
 export async function analyzeVideoFrames(frames, videoFile, query, conversationHistory = []) {
-  // Build frame context descriptions
-  const frameContexts = frames.map((f, i) => 
-    `Frame ${i + 1} (at ${formatTimestamp(f.timestamp)}): extracted from ${videoFile.original_name}`
-  ).join('\n');
+  const frameSummary = frames.map((f, i) => {
+    return `Frame ${i + 1} at ${f.timestamp}s (file: ${f.filename})`;
+  }).join('\n');
 
-  const systemPrompt = `You are an expert video analyst. You have access to key frames extracted from a video.
-Analyze the video content and provide comprehensive insights including:
-1. Overall summary
-2. Scene-by-scene breakdown with timestamps
-3. Key moments and events
-4. Answer to the user's specific question`;
+  const prompt = `
+[Video Attached: ${videoFile.original_name}]
 
-  const videoContext = `[VIDEO ANALYSIS: ${videoFile.original_name}]
-Duration: ${videoFile.metadata?.duration ? formatTimestamp(videoFile.metadata.duration) : 'Unknown'}
-Resolution: ${videoFile.metadata?.width || '?'}x${videoFile.metadata?.height || '?'}
-FPS: ${videoFile.metadata?.fps || 'Unknown'}
-Frames extracted: ${frames.length}
+Extracted Frames:
+${frameSummary}
 
-Extracted frames at these timestamps:
-${frameContexts}`;
+IMPORTANT:
+- The system does NOT analyze actual image pixels from frames.
+- It cannot visually interpret scenes, objects, or actions.
+- It must NOT hallucinate or invent visual details.
 
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...conversationHistory.slice(-6),
-    {
-      role: 'user',
-      content: `${videoContext}\n\nUser Query: ${query || 'Please provide a comprehensive analysis of this video.'}`
-    }
-  ];
+You can:
+- Describe video structure based on timestamps
+- Suggest what might be happening (with uncertainty)
+- Recommend further analysis methods
 
-  const analysis = await chatCompletion(messages, { max_tokens: 2500 });
+User Query:
+${query}
+`;
 
-  // Also generate structured breakdown
-  const structuredPrompt = [
-    { role: 'system', content: 'Return ONLY valid JSON. No markdown, no explanation.' },
-    {
-      role: 'user',
-      content: `Based on this video analysis:
-${analysis}
-
-Return a JSON object with:
-{
-  "summary": "2-3 sentence summary",
-  "scenes": [{"timestamp": "0:00", "description": "..."}],
-  "keyMoments": [{"timestamp": "0:00", "event": "..."}]
-}`
-    }
-  ];
-
-  let structured = { summary: analysis, scenes: [], keyMoments: [] };
-  try {
-    const raw = await chatCompletion(structuredPrompt, { max_tokens: 1000, temperature: 0.2 });
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    structured = JSON.parse(cleaned);
-  } catch (e) {
-    // Use full analysis as summary if JSON parsing fails
-    structured.summary = analysis;
-  }
-
-  return { ...structured, fullAnalysis: analysis, framesAnalyzed: frames.length };
+  return prompt;
 }
 
 /**
@@ -249,10 +238,28 @@ export async function analyzeDocument(mediaFile, query, conversationHistory = []
 Identify: text content, tables, key data points, structure, and answer specific questions.
 Return structured, organized information.`;
 
-  const docContext = `[DOCUMENT: ${mediaFile.original_name}]
+let extractedText = '';
+
+if (mediaFile.mime_type === 'application/pdf' && existsSync(mediaFile.path)) {
+  extractedText = await extractPdfText(mediaFile.path);
+}
+
+// limit text (VERY IMPORTANT for tokens)
+const limitedText = extractedText.slice(0, 5000);
+
+const docContext = `
+[DOCUMENT: ${mediaFile.original_name}]
+
 Type: ${mediaFile.mime_type}
 Size: ${(mediaFile.size / 1024).toFixed(1)}KB
-Filename analysis: ${analyzeFilename(mediaFile.original_name)}`;
+
+Extracted Content:
+${limitedText || '[No text could be extracted]'}
+
+IMPORTANT:
+- Answer ONLY based on extracted content
+- DO NOT hallucinate missing information
+`;
 
   const messages = [
     { role: 'system', content: systemPrompt },

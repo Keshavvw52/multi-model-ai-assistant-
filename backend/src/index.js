@@ -35,7 +35,6 @@ app.get('/api/health', (req, res) => {
 app.use('/api/upload', uploadRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/analyze', analyzeRouter);
-app.use('/api/compare', analyzeRouter);
 app.use('/api/media', mediaRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/export', conversationsRouter);

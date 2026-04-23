@@ -8,7 +8,10 @@ import { MediaGallery } from '@/components/MediaGallery';
 import { exportConversation } from '@/lib/api';
 import Plasma from '@/components/Plasma';
 
+
+
 export default function Home() {
+  const [comparisonResult, setComparisonResult] = useState<string | null>(null);
   const {
     messages,
     conversationId,
@@ -49,9 +52,9 @@ export default function Home() {
     attachMedia(media);
   }, [attachMedia]);
 
-  const handleComparisonResult = useCallback((result: string) => {
-    sendMessage(`Here is the comparison analysis:\n\n${result}`);
-  }, [sendMessage]);
+const handleComparisonResult = useCallback((result: string) => {
+  setComparisonResult(result); // store separately
+}, []);
 
   const handleExport = useCallback(async () => {
     if (!conversationId) return;
@@ -223,17 +226,34 @@ export default function Home() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-hidden relative bg-transparent">
-            <ChatWindow
-              messages={messages}
-              mediaFiles={mediaMap.current}
-              attachedMedia={attachedMedia}
-              isLoading={isLoading}
-              onSend={sendMessage}
-              onMediaUploaded={handleMediaUploaded}
-              onDetachMedia={detachMedia}
-            />
-          </main>
+        <main className="flex-1 overflow-hidden relative bg-transparent flex flex-col">
+  
+  {/* Chat */}
+  <div className="flex-1 overflow-hidden">
+    <ChatWindow
+      messages={messages}
+      mediaFiles={mediaMap.current}
+      attachedMedia={attachedMedia}
+      isLoading={isLoading}
+      onSend={sendMessage}
+      onMediaUploaded={handleMediaUploaded}
+      onDetachMedia={detachMedia}
+    />
+  </div>
+
+  {/* Comparison Result UI */}
+  {comparisonResult && (
+    <div className="border-t border-white/10 bg-black/40 p-4 max-h-[200px] overflow-auto">
+      <h2 className="text-sm font-semibold text-white mb-2">
+        🔍 Comparison Result
+      </h2>
+      <pre className="text-xs text-white/80 whitespace-pre-wrap">
+        {comparisonResult}
+      </pre>
+    </div>
+  )}
+
+</main>
         </div>
       </div>
     </div>

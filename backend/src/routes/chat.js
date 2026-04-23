@@ -12,6 +12,8 @@ import {
 import { processAudio } from '../services/audio-processor.js';
 import { extractFrames } from '../services/video-processor.js';
 
+
+
 const router = Router();
 
 /**
@@ -81,24 +83,29 @@ router.get('/stream', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
-  // Keep connection alive (important)
   const keepAlive = setInterval(() => {
     res.write(': keep-alive\n\n');
   }, 15000);
 
+  let isClosed = false;
+
   req.on('close', () => {
-    clearInterval(keepAlive);
     console.log('🔌 Client disconnected');
+    isClosed = true;
+    clearInterval(keepAlive);
   });
 
   const sendEvent = (event, data) => {
+    if (isClosed) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
   const sendError = (error) => {
-    sendEvent('error', { error });
-    clearInterval(keepAlive);
-    res.end();
+    if (!isClosed) {
+      sendEvent('error', { error });
+      clearInterval(keepAlive);
+      res.end();
+    }
   };
 
   try {
@@ -108,7 +115,6 @@ router.get('/stream', async (req, res) => {
 
     let conversationId = convId;
 
-    // Clean mediaIds
     const mediaRefIds = mediaIds
       ? mediaIds.split(',').map(id => id.trim()).filter(Boolean)
       : [];
@@ -121,7 +127,7 @@ router.get('/stream', async (req, res) => {
       conversationModel.create(conversationId, message.slice(0, 60));
     }
 
-    // Load media references
+    // Load media
     const mediaRefs = mediaRefIds
       .map(id => mediaModel.findById(id))
       .filter(Boolean)
@@ -138,14 +144,22 @@ router.get('/stream', async (req, res) => {
 
     sendEvent('start', { conversationId, messageId: userMsgId });
 
-    // Get context
     const history = await getContextForLLM(conversationId);
     const llmMessages = [...history];
 
     let fullResponse = '';
     const assistantMsgId = uuidv4();
 
-    // Media-specific handling
+    // Helper to safely stream
+    const streamLoop = async (streamGen) => {
+      for await (const chunk of streamGen) {
+        if (isClosed) break;
+
+        fullResponse += chunk;
+        sendEvent('chunk', { text: chunk });
+      }
+    };
+
     if (mediaRefs.length > 0) {
       const primaryMedia = mediaModel.findById(mediaRefIds[0]);
 
@@ -171,7 +185,7 @@ router.get('/stream', async (req, res) => {
               message,
               history.slice(0, -1)
             );
-          } catch (e) {
+          } catch {
             streamGen = streamChatCompletion(llmMessages);
           }
         } else if (primaryMedia.media_type === 'document') {
@@ -184,28 +198,23 @@ router.get('/stream', async (req, res) => {
           streamGen = streamChatCompletion(llmMessages);
         }
 
-        for await (const chunk of streamGen) {
-          fullResponse += chunk;
-          sendEvent('chunk', { text: chunk });
-        }
+        await streamLoop(streamGen);
+
       } else {
-        for await (const chunk of streamChatCompletion(llmMessages)) {
-          fullResponse += chunk;
-          sendEvent('chunk', { text: chunk });
-        }
+        await streamLoop(streamChatCompletion(llmMessages));
       }
+
     } else {
-      for await (const chunk of streamChatCompletion(llmMessages)) {
-        fullResponse += chunk;
-        sendEvent('chunk', { text: chunk });
-      }
+      await streamLoop(streamChatCompletion(llmMessages));
     }
 
-    // Save assistant message
-    messageModel.create(assistantMsgId, conversationId, 'assistant', fullResponse);
-    conversationModel.touch(conversationId);
+    // SAVE ONLY IF NOT CANCELLED
+    if (!isClosed) {
+      messageModel.create(assistantMsgId, conversationId, 'assistant', fullResponse);
+      conversationModel.touch(conversationId);
 
-    sendEvent('done', { messageId: assistantMsgId, conversationId });
+      sendEvent('done', { messageId: assistantMsgId, conversationId });
+    }
 
     clearInterval(keepAlive);
     res.end();

@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Custom font variables ─────────────────────────────────────────────── */
+:root {
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'DM Mono', monospace;
+}
+
+/* ─── Base resets ───────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html, body, #__next {
+  height: 100%;
+}
+
+/* ─── Scrollbar styling ─────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cdd4e2;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8b4cc;
+}
+
+/* ─── Prose overrides (markdown in AI messages) ─────────────────────────── */
+.prose p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+.prose ul, .prose ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.25em;
+}
+.prose li {
+  margin-top: 0.15em;
+  margin-bottom: 0.15em;
+}
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+  font-weight: 600;
+  color: #263449;
+}
+.prose h1 { font-size: 1.1em; }
+.prose h2 { font-size: 1em; }
+.prose h3 { font-size: 0.95em; }
+.prose strong { color: #263449; }
+.prose a { color: #6366f1; text-decoration: underline; }
+.prose hr { border-color: #e4e8f0; margin: 0.75em 0; }
+
+/* ─── Prose in dark context (user bubble) override ──────────────────────── */
+.prose-invert p,
+.prose-invert li,
+.prose-invert h1,
+.prose-invert h2,
+.prose-invert h3 {
+  color: white;
+}
+
+/* ─── Animation utilities ──────────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin {
+  animation: spin 0.75s linear infinite;
+}
